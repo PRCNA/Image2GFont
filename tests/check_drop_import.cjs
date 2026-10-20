@@ -1,0 +1,20 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync('frontend/app.js','utf8');
+const handlers={},elements={},calls=[],messages=[];
+const element=id=>elements[id]??=( {value:'',classList:{add(){},remove(){}},addEventListener(type,fn){handlers[id+':'+type]=fn;}} );
+let confirmation=true;
+const ctx={Array,Promise,Error,Math,$:element,state:{job:null},dirty:false,confirm:()=>confirmation,tr:k=>k,status:s=>messages.push(s),window:{addEventListener(){}},action:async d=>calls.push(d),FileReader:class{readAsDataURL(f){this.result='data:image/png;base64,'+f.data;this.onload();}}};
+vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('let importingImages='),source.indexOf('// Editing uses')),ctx);
+const files=[{name:'一.png',size:3,data:'YWJj'},{name:'二.jpg',size:3,data:'ZGVm'}];
+(async()=>{
+ handlers['imagePanel:drop']({dataTransfer:{types:['Files'],files},preventDefault(){},stopPropagation(){}});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(calls.length,1);assert.equal(calls[0].files.length,2);assert.equal(calls[0].files[1].name,'二.jpg');assert.equal(calls[0].files[0].data,'YWJj');
+ await ctx.importImages([...files,{name:'bad.txt',size:1}]);assert.equal(calls.length,1);assert(messages.at(-1).includes('unsupportedImages'));
+ ctx.state.job={status:'running'};await ctx.importImages(files);assert.equal(calls.length,1);assert.equal(messages.at(-1),'busy');ctx.state.job=null;
+ ctx.dirty=true;confirmation=false;await ctx.importImages(files);assert.equal(calls.length,1);ctx.dirty=false;
+ await ctx.importImages([{name:'large.png',size:100*1024*1024}]);assert.equal(calls.length,1);assert.equal(messages.at(-1),'imagesTooLarge');
+ ctx.FileReader=class{readAsDataURL(){this.error=new Error('read failed');this.onerror();}};
+ await ctx.importImages(files);assert(messages.at(-1).includes('read failed'));
+ console.log('Drop import: multi-file payload, invalid format, busy task, unsaved cancellation, size limit and read error passed.');
+})().catch(e=>{console.error(e);process.exitCode=1;});

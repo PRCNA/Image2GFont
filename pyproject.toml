@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image2gfont-core"
+version = "0.0.1"
+description = "Image2GFont Phase 0: experimental GFont V5 reader/writer"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+image = ["numpy", "scipy", "Pillow>=9.1"]
+editor = ["Pillow>=9.1"]
+
+[tool.setuptools.packages.find]
+include = ["gfont_core*", "image_pipeline*", "coordinate_editor*", "stroke_editor*", "vision_core*"]

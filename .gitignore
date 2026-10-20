@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv*/
+runtime/
+ocr_models/
+vision_models/
+artifacts/
+samples/
+*.zip
+*.gfont
+*.log
+*.pem
+.env*
+build/
+dist/

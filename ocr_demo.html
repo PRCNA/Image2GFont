@@ -1,0 +1,54 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Image2GFont OCR Demo</title>
+<style>body{margin:20px;font:16px/1.6 system-ui;color:#243247}header{position:sticky;top:0;background:white;padding:10px;z-index:2}main{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:12px}#view{overflow:auto;max-height:80vh;background:#eee}canvas{display:block}#rows{overflow:auto;max-height:80vh}button,select{padding:8px;margin:3px}article{border-bottom:1px solid #ccc;padding:8px;cursor:pointer}.low{border-left:4px solid #d66b00}[contenteditable]{background:#f4f7fa;padding:4px}small{color:#666}</style>
+<header><b>Image2GFont · OCR Demo</b><p>&#25991;&#23383;&#26694;&#21644;&#35782;&#21035;&#32467;&#26524;&#22343;&#20026;&#20505;&#36873;&#65292;&#19981;&#20250;&#33258;&#21160;&#20889;&#20837;&#23383;&#20307;&#24037;&#31243;&#12290;</p>
+<select id="page"></select><label><input type="checkbox" id="chars">&#21333;&#23383;&#26694;</label>
+<label>&#32553;&#25918; <input id="zoom" type="range" min="30" max="200" value="80"></label><button id="fit">&#36866;&#24212;&#22270;&#29255;</button><button id="save">&#19979;&#36733;&#20154;&#24037;&#20462;&#25913;&#35760;&#24405;</button><label>载入修改记录 <input id="restore" type="file" accept=".json,application/json"></label><span id="restoreStatus" role="status"></span><span id="info"></span></header>
+<main><div id="view"><canvas id="canvas"></canvas></div><div id="rows"></div></main>
+<script>
+const data=__RESULT_DATA__;let current=0,selected=-1,picture=new Image();const $=id=>document.getElementById(id);let edits={};
+data.images.forEach((r,i)=>{let o=document.createElement('option');o.value=i;o.textContent=r.id+' · '+r.lines.length+' regions';$('page').append(o)});
+function draw(){let scale=+$('zoom').value/100,c=$('canvas'),ctx=c.getContext('2d');c.width=picture.naturalWidth*scale;c.height=picture.naturalHeight*scale;ctx.drawImage(picture,0,0,c.width,c.height);let r=data.images[current],items=$('chars').checked?r.characters:r.lines;items.forEach((v,i)=>{ctx.strokeStyle=i===selected?'#00a1d6':v.score<.8?'#ff7a00':'#008d46';ctx.lineWidth=i===selected?3:1;ctx.beginPath();v.box.forEach((p,j)=>j?ctx.lineTo(p[0]*scale,p[1]*scale):ctx.moveTo(p[0]*scale,p[1]*scale));ctx.closePath();ctx.stroke()})}
+function load(){selected=-1;let r=data.images[current];$('info').textContent=r.status+' · '+r.seconds+'s';$('rows').replaceChildren();let items=$('chars').checked?r.characters:r.lines;items.forEach((v,i)=>{let el=document.createElement('article');if(v.score<.8)el.className='low';let label=document.createElement('small');label.textContent=(i+1)+' · score '+v.score.toFixed(3);let text=document.createElement('div');text.contentEditable=true;let key=r.id+':'+($('chars').checked?'char':'line')+':'+i;text.textContent=edits[key]?.text??v.text;text.oninput=()=>{edits[key]={image:r.id,kind:$('chars').checked?'character':'line',index:i,original:v.text,text:text.textContent,box:v.box}};el.onclick=()=>{selected=i;draw();let b=v.box,scale=+$('zoom').value/100;$('view').scrollTop=Math.max(0,Math.min(...b.map(p=>p[1]))*scale-80);$('view').scrollLeft=Math.max(0,(Math.min(...b.map(p=>p[0]))+Math.max(...b.map(p=>p[0])))*scale/2-$('view').clientWidth/2)};el.append(label,text);$('rows').append(el)});if(r.error){let p=document.createElement('p');p.textContent=r.error;$('rows').append(p)}picture=new Image();picture.onload=draw;picture.src=r.image||''}
+
+function validateCorrections(doc, images, existing) {
+  if (!doc || doc.format !== 'Image2GFontOCRCorrections' || doc.schema_version !== 1 || doc.confirmed_for_font !== false)
+    throw new Error('不支持的修改记录格式');
+  if (!Array.isArray(doc.source_manifest) || doc.source_manifest.length !== images.length)
+    throw new Error('图片批次不匹配');
+  const sources = new Map();
+  for (const source of doc.source_manifest) {
+    if (!source || sources.has(source.id)) throw new Error('重复或无效的图片记录');
+    sources.set(source.id, source.sha256);
+  }
+  for (const image of images) if (sources.get(image.id) !== image.sha256) throw new Error('原图校验不匹配');
+  if (!doc.edits || typeof doc.edits !== 'object' || Array.isArray(doc.edits)) throw new Error('修改列表无效');
+  const checked = Object.create(null);
+  for (const [key, edit] of Object.entries(doc.edits)) {
+    if (!edit || !['line', 'character'].includes(edit.kind) || !Number.isInteger(edit.index) || edit.index < 0 || typeof edit.text !== 'string')
+      throw new Error('修改条目无效');
+    const image = images.find(x => x.id === edit.image);
+    const item = image && (edit.kind === 'line' ? image.lines : image.characters)[edit.index];
+    const expectedKey = edit.image + ':' + (edit.kind === 'line' ? 'line' : 'char') + ':' + edit.index;
+    if (key !== expectedKey || !item || edit.original !== item.text || JSON.stringify(edit.box) !== JSON.stringify(item.box))
+      throw new Error('识别结果已变化，不能套用此记录');
+    if (Object.hasOwn(existing, key) && existing[key].text !== edit.text)
+      throw new Error('与当前修改冲突，请先保存当前记录并在新页面载入');
+    checked[key] = {image: image.id, kind: edit.kind, index: edit.index, original: item.text, text: edit.text, box: item.box};
+  }
+  return {...existing, ...checked};
+}
+$('restore').onchange = async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    if (file.size > 20 * 1024 * 1024) throw new Error('记录文件超过 20 MB');
+    const merged = validateCorrections(JSON.parse(await file.text()), data.images, edits);
+    edits = merged;
+    load();
+    $('restoreStatus').textContent = '已载入，当前共 ' + Object.keys(edits).length + ' 项修改';
+  } catch (error) { $('restoreStatus').textContent = '未载入：' + error.message; }
+  finally { event.target.value = ''; }
+};
+
+$('fit').onclick=()=>{ $('zoom').value=Math.max(30,Math.min(200,Math.floor($('view').clientWidth/picture.naturalWidth*100)));draw()};$('page').onchange=()=>{current=+$('page').value;load()};$('chars').onchange=load;$('zoom').oninput=draw;$('save').onclick=()=>{let blob=new Blob([JSON.stringify({format:'Image2GFontOCRCorrections',schema_version:1,edits,source_manifest:data.images.map(r=>({id:r.id,sha256:r.sha256})),confirmed_for_font:false},null,2)],{type:'application/json'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ocr_corrections.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};window.onbeforeunload=e=>{if(Object.keys(edits).length){e.preventDefault();e.returnValue=''}};if(data.images.length)load();
+</script></html>
